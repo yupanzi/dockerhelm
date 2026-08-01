@@ -1,0 +1,29 @@
+{{/*
+PodDisruptionBudget:
+  - Useful only with multiple replicas (one replica blocks node maintenance); dockerhelm.pdbWillCreate owns the condition.
+  - dockerhelm.pdbBudget owns the effective budget field (min/max are mutually exclusive; 0 is valid).
+  - unhealthyPodEvictionPolicy requires Kubernetes >= 1.27 (beta and enabled by default in 1.27 / GA in 1.31).
+    Gate it by the Capabilities version and omit the field automatically on older clusters.
+*/}}
+{{- if include "dockerhelm.pdbWillCreate" . }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "dockerhelm.fullname" . }}
+  labels:
+    {{- include "dockerhelm.labels" . | nindent 4 }}
+  {{- with include "dockerhelm.annotations" (dict "root" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with include "dockerhelm.pdbBudget" . }}
+  {{ . }}
+  {{- end }}
+  {{- if and .Values.podDisruptionBudget.unhealthyPodEvictionPolicy (semverCompare ">=1.27-0" .Capabilities.KubeVersion.Version) }}
+  unhealthyPodEvictionPolicy: {{ .Values.podDisruptionBudget.unhealthyPodEvictionPolicy }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "dockerhelm.selectorLabels" . | nindent 6 }}
+{{- end }}

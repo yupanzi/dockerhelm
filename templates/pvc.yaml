@@ -1,0 +1,31 @@
+{{/*
+Standalone PVC for Deployment mode.
+StatefulSet uses volumeClaimTemplates, while existingClaim is managed externally by the user; skip both.
+dockerhelm.pvcName keeps the name synchronized with claimName in _podSpec.tpl as a single source of truth.
+Multiple replicas sharing this PVC must use ReadWriteMany (NOTES.txt warns when it is not RWX).
+*/}}
+{{- if and .Values.persistence.enabled (eq .Values.workload.kind "Deployment") (not .Values.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "dockerhelm.pvcName" . }}
+  labels:
+    {{- include "dockerhelm.labels" . | nindent 4 }}
+  {{- with include "dockerhelm.annotations" (dict "root" . "extra" .Values.persistence.annotations) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size | quote }}
+  {{- with .Values.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.persistence.selector }}
+  selector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

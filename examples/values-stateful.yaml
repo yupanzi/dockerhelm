@@ -1,0 +1,67 @@
+# Use case: stateful service (such as PostgreSQL/Redis) — StatefulSet + PVC + 3 replicas
+# The governing headless Service is created automatically; pod DNS:
+#   <release>-dockerhelm-0.<release>-dockerhelm-headless.<ns>.svc
+workload:
+  kind: StatefulSet
+  replicas: 3
+  podManagementPolicy: OrderedReady
+  # Retain PVCs when scaling down or deleting (Kubernetes >= 1.27)
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+
+image:
+  repository: postgres
+  tag: "16-alpine"
+
+container:
+  ports:
+    - name: pg
+      containerPort: 5432
+      protocol: TCP
+  env:
+    - name: POSTGRES_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: pg-password
+          key: password
+    - name: PGDATA
+      value: /var/lib/postgresql/data/pgdata
+  volumeMounts:
+    - name: data
+      mountPath: /var/lib/postgresql/data
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  readinessProbe:
+    exec:
+      command: ["pg_isready", "-U", "postgres"]
+    initialDelaySeconds: 10
+    periodSeconds: 5
+
+# Force database replicas onto different nodes (hard anti-affinity; remain Pending instead of co-locating when nodes are insufficient)
+podAntiAffinity:
+  type: hard
+
+persistence:
+  enabled: true
+  name: data
+  # Empty uses the cluster's default StorageClass
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 100Gi
+
+# Regular ClusterIP Service for client load-balanced access;
+# use the automatically created headless Service to connect directly to an individual pod
+service:
+  enabled: true
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+      protocol: TCP

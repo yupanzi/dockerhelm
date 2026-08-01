@@ -1,0 +1,48 @@
+# Manual fallback: pushing a tag (v* matching the Chart.yaml version) packages the chart,
+# pushes it to ghcr.io/<owner>/charts/dockerhelm (OCI) and creates a GitHub Release.
+# Use only while semantic-release.yml is disabled — a hand-pushed Chart.yaml bump on master
+# would otherwise also trigger the automated path and produce a second release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # Create the GitHub Release
+  packages: write # Push the OCI chart to ghcr.io
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          # Pin the version to avoid hidden breakage from a major update to latest
+          version: v4.2.3
+
+      - name: Verify tag matches Chart.yaml version
+        run: |
+          # gsub removes quotes so version: "1.2.3" is parsed correctly too
+          chart_version=$(awk '/^version:/ {gsub(/"/, "", $2); print $2}' Chart.yaml)
+          if [ "v${chart_version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match Chart.yaml version ${chart_version}" >&2
+            exit 1
+          fi
+
+      - name: helm lint
+        run: helm lint .
+
+      - name: Package and push to GHCR (OCI)
+        run: |
+          helm package .
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+          helm push dockerhelm-*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dockerhelm-*.tgz
+          generate_release_notes: true

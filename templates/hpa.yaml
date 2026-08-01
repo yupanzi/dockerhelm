@@ -1,0 +1,48 @@
+{{- if .Values.autoscaling.enabled }}
+{{- $a := .Values.autoscaling }}
+{{- if not (or $a.metrics $a.targetCPUUtilizationPercentage $a.targetMemoryUtilizationPercentage) }}
+{{- fail "autoscaling.enabled=true requires at least one metric: targetCPUUtilizationPercentage / targetMemoryUtilizationPercentage / metrics" }}
+{{- end }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "dockerhelm.fullname" . }}
+  labels:
+    {{- include "dockerhelm.labels" . | nindent 4 }}
+  {{- with include "dockerhelm.annotations" (dict "root" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: {{ .Values.workload.kind }}
+    name: {{ include "dockerhelm.fullname" . }}
+  minReplicas: {{ $a.minReplicas }}
+  maxReplicas: {{ $a.maxReplicas }}
+  metrics:
+    {{- if $a.metrics }}
+    {{- toYaml $a.metrics | nindent 4 }}
+    {{- else }}
+    {{- with $a.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ . }}
+    {{- end }}
+    {{- with $a.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ . }}
+    {{- end }}
+    {{- end }}
+  {{- with $a.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

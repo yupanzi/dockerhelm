@@ -1,0 +1,8 @@
+# Helm package artifacts
+*.tgz
+charts/
+
+# semantic-release toolchain is committed (package.json + lockfile); only the install dir is ignored
+node_modules/
+
+.DS_Store

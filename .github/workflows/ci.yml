@@ -1,0 +1,92 @@
+# Quality gate for PRs and main: helm lint + strict schema validation + use-case rendering +
+# kubeconform + server-side dry run against a kind cluster.
+# The use-case list is defined once in the "Render all use cases" step and written to disk;
+# kubeconform and the server dry run consume the same artifacts so manifests cannot drift.
+# The server dry run is critical: only the API server rejects issues such as HPA policies or
+# externalTrafficPolicy, which helm template / client validation cannot detect.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # image.repository is required (the chart has no default image); CI uses this repository path as a placeholder.
+  # It only renders and performs a server dry run, so the image is never pulled.
+  DEMO_IMAGE: --set image.repository=ghcr.io/${{ github.repository }} --set image.tag=ci
+
+jobs:
+  lint-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          # Pin the version to avoid hidden breakage from a major update to latest
+          version: v4.2.3
+
+      - name: helm lint
+        run: helm lint . $DEMO_IMAGE
+
+      - name: Validate required image.repository (bare rendering must fail with a clear message)
+        # grep matches only when rendering fails with the required-field message; successful rendering has no message and fails this step
+        run: helm template test . 2>&1 | grep -q 'image.repository is required'
+
+      - name: Negative schema validation (unknown fields must be rejected and global must be allowed)
+        run: |
+          if helm template test . $DEMO_IMAGE --set replicaCount=4 > /dev/null 2>&1; then
+            echo "values.schema.json should reject the unknown field replicaCount" >&2
+            exit 1
+          fi
+          helm template test . $DEMO_IMAGE --set global.env=prod > /dev/null
+
+      - name: Render all use cases (single source list reused by later steps)
+        run: |
+          mkdir -p /tmp/rendered
+          helm template test . $DEMO_IMAGE                                        > /tmp/rendered/default.yaml
+          helm template test . -f examples/values-stateful.yaml                   > /tmp/rendered/stateful.yaml
+          helm template test . -f examples/values-sidecar.yaml                    > /tmp/rendered/sidecar.yaml
+          helm template test . -f examples/values-comprehensive.yaml              > /tmp/rendered/comprehensive.yaml
+          helm template test . $DEMO_IMAGE --set autoscaling.enabled=true --set autoscaling.minReplicas=2 > /tmp/rendered/hpa-pdb.yaml
+          helm template test . $DEMO_IMAGE --set workload.strategy.type=Recreate  > /tmp/rendered/recreate.yaml
+          helm template test . $DEMO_IMAGE --set workload.kind=StatefulSet --set persistence.enabled=true > /tmp/rendered/sts-persistence.yaml
+          helm template test . $DEMO_IMAGE --set workload.kind=StatefulSet --set workload.updateStrategy.type=OnDelete > /tmp/rendered/sts-ondelete.yaml
+
+      - name: Regression validation (Recreate / OnDelete must not retain rollingUpdate)
+        # Do not use `! grep`: bash -e does not apply to commands negated with !, so failures can be silently ignored
+        run: |
+          for f in /tmp/rendered/recreate.yaml /tmp/rendered/sts-ondelete.yaml; do
+            test -s "$f"
+            if grep -q rollingUpdate "$f"; then
+              echo "$f retains rollingUpdate (the template guard should omit it for Recreate/OnDelete)" >&2
+              exit 1
+            fi
+          done
+
+      - name: Validate all rendered artifacts with kubeconform
+        run: |
+          # Pin the version consistently with Helm; -cache shares schema downloads across invocations
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz | tar xz
+          mkdir -p /tmp/kubeconform-cache
+          for f in /tmp/rendered/*.yaml; do
+            ./kubeconform -strict -summary -cache /tmp/kubeconform-cache "$f"
+          done
+
+      - name: Start kind cluster
+        uses: helm/kind-action@v1
+
+      - name: Server-side dry run all rendered artifacts (API-server validation)
+        run: |
+          for f in /tmp/rendered/*.yaml; do
+            echo "=== $f ==="
+            kubectl apply --dry-run=server -f "$f"
+          done

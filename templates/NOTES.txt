@@ -1,0 +1,73 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀  {{ include "dockerhelm.fullname" . }} ({{ .Values.workload.kind }})
+    Image: {{ include "dockerhelm.imageRef" . }}
+    Replicas: {{ if .Values.autoscaling.enabled }}HPA {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }}{{ else }}{{ .Values.workload.replicas }}{{ end }}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Zero-Downtime Readiness:
+{{- if eq .Values.workload.kind "Deployment" }}
+{{- $st := .Values.workload.strategy | default dict }}
+{{- if eq ($st.type | default "RollingUpdate") "RollingUpdate" }}
+{{- $ru := $st.rollingUpdate | default dict }}
+{{- /* Sprig default treats integer 0 as empty, but 0 is a core chart default; use kindIs to distinguish it */}}
+  • Rolling Update: maxSurge={{ if kindIs "invalid" $ru.maxSurge }}25%{{ else }}{{ $ru.maxSurge }}{{ end }}, maxUnavailable={{ if kindIs "invalid" $ru.maxUnavailable }}25%{{ else }}{{ $ru.maxUnavailable }}{{ end }}
+{{- else }}
+  • ⚠ strategy=Recreate: all old replicas stop before the upgrade (causes downtime)
+{{- end }}
+{{- else }}
+{{- $st := .Values.workload.updateStrategy | default dict }}
+  • Update Strategy: {{ $st.type | default "RollingUpdate" }}{{ with $st.rollingUpdate }}{{ with .partition }}, partition={{ . }}{{ end }}{{ end }}
+  • Headless Service: {{ include "dockerhelm.headlessServiceName" . }} (pod DNS: {{ include "dockerhelm.fullname" . }}-0.{{ include "dockerhelm.headlessServiceName" . }}.{{ .Release.Namespace }}.svc)
+{{- end }}
+  • Graceful Shutdown: terminationGracePeriodSeconds={{ .Values.workload.terminationGracePeriodSeconds }}s
+{{- $pdbEnabled := ((.Values.podDisruptionBudget | default dict).enabled) }}
+{{- if include "dockerhelm.pdbWillCreate" . }}
+  • PodDisruptionBudget: {{ include "dockerhelm.pdbBudget" . | replace ": " "=" }}
+{{- else if and $pdbEnabled .Values.autoscaling.enabled }}
+  • ⚠ PDB is enabled, but no PDB is created when HPA minReplicas=1; use minReplicas >= 2 for zero-downtime protection
+{{- else if $pdbEnabled }}
+  • ⚠ PDB is enabled, but no PDB is created with one replica (prevents blocking node maintenance)
+{{- else }}
+  • ⚠ PodDisruptionBudget is disabled; node eviction may temporarily leave no available replicas
+{{- end }}
+{{- if include "dockerhelm.topologySpread" . }}
+  • Topology Spread: {{ join ", " .Values.topologySpreadConstraints.topologyKeys }} ({{ .Values.topologySpreadConstraints.whenUnsatisfiable }})
+{{- end }}
+{{- $paa := .Values.podAntiAffinity | default dict }}
+{{- if and $paa.enabled (not .Values.affinity) }}
+  • Pod Anti-Affinity: {{ $paa.type }} on {{ $paa.topologyKey }}
+{{- end }}
+
+📡 Access:
+{{- if .Values.ingress.enabled }}
+{{- with .Values.ingress.hostname }}
+  https://{{ . }}{{ $.Values.ingress.path }}
+{{- end }}
+{{- range .Values.ingress.extraHosts }}
+  https://{{ . }}{{ $.Values.ingress.path }}
+{{- end }}
+{{- else if .Values.service.enabled }}
+  Service: {{ include "dockerhelm.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  Ports: {{ range .Values.service.ports }}{{ .name }}={{ .port }} {{ end }}
+{{- else }}
+  ⓘ Service / Ingress is disabled (workload only, possibly for a Job/Worker)
+{{- end }}
+
+🔍 Check Status:
+  kubectl -n {{ .Release.Namespace }} get {{ .Values.workload.kind | lower }},svc,ingress,pdb,hpa -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} rollout status {{ .Values.workload.kind | lower }}/{{ include "dockerhelm.fullname" . }}
+
+{{- if and (eq .Values.workload.kind "Deployment") .Values.persistence.enabled (not (has "ReadWriteMany" .Values.persistence.accessModes)) (gt (int .Values.workload.replicas) 1) }}
+
+⚠ Warning: Multiple Deployment replicas share a non-ReadWriteMany PVC; cross-node scheduling will fail
+   with Multi-Attach (the default anti-affinity deliberately pushes replicas to different nodes). Use RWX storage, one replica, or a StatefulSet.
+{{- else if and (eq .Values.workload.kind "Deployment") .Values.persistence.enabled }}
+
+ⓘ Note: Multiple Deployment replicas with persistence must use ReadWriteMany for shared storage
+{{- end }}
+{{- if and (eq .Values.workload.kind "StatefulSet") (not .Values.persistence.enabled) (not .Values.persistence.existingClaim) }}
+
+ⓘ Tip: StatefulSet usually requires persistent storage; set persistence.enabled=true
+{{- end }}
+
+📚 Documentation: https://github.com/yupanzi/dockerhelm

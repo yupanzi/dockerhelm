@@ -1,0 +1,13 @@
+{{/*
+Escape hatch: deploy arbitrary Kubernetes resources from extraObjects with the release.
+Both object and string forms are supported and rendered with tpl, so they may reference
+expressions such as {{ include "dockerhelm.fullname" . }}.
+*/}}
+{{- range .Values.extraObjects }}
+---
+{{- if typeIs "string" . }}
+{{ tpl . $ }}
+{{- else }}
+{{ tpl (toYaml .) $ }}
+{{- end }}
+{{- end }}

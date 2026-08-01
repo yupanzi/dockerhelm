@@ -1,0 +1,222 @@
+# Use case: cover all pass-through fields for regression testing helm template / CI server dry-run output
+# Note: this file must pass kubectl apply --dry-run=server against a kind cluster
+commonLabels:
+  team: platform
+commonAnnotations:
+  example.com/owner: platform-team
+
+workload:
+  kind: Deployment
+  replicas: 4
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: "25%"
+      maxUnavailable: 0
+  minReadySeconds: 10
+  revisionHistoryLimit: 5
+  terminationGracePeriodSeconds: 90
+
+image:
+  repository: registry.example.com/test/comprehensive
+  tag: v9.9.9
+  pullPolicy: Always
+  pullSecrets:
+    - { name: my-extra-secret }
+  privateRegistries:
+    - registry.example.com
+
+container:
+  command: ["/app/bin/server"]
+  args: ["--config", "/etc/app/conf.yaml"]
+  workingDir: /app
+  ports:
+    - { name: http, containerPort: 8080, protocol: TCP }
+    - { name: grpc, containerPort: 9090, protocol: TCP }
+    - { name: metrics, containerPort: 9091, protocol: TCP }
+  env:
+    - name: POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+    # env supports template interpolation
+    - name: RELEASE_NAME
+      value: '{{ .Release.Name }}'
+  envFrom:
+    - configMapRef: { name: comp-config, optional: true }
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+  livenessProbe:
+    httpGet: { path: /healthz, port: http }
+    initialDelaySeconds: 30
+  readinessProbe:
+    httpGet: { path: /ready, port: http }
+  startupProbe:
+    httpGet: { path: /startup, port: http }
+    failureThreshold: 30
+    periodSeconds: 10
+  lifecycle:
+    preStop:
+      exec:
+        command: ["/bin/sh", "-c", "sleep 15"]
+  volumeMounts:
+    - { name: config, mountPath: /etc/app }
+    - { name: tmp, mountPath: /tmp }
+
+initContainers:
+  - name: migrate
+    image: registry.example.com/test/migrate:1.0
+    command: ["./migrate", "up"]
+
+extraContainers:
+  - name: sidecar
+    image: nginx:1.27
+    ports:
+      - { name: side, containerPort: 8081 }
+
+pod:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9091"
+  labels:
+    tier: backend
+  securityContext:
+    fsGroup: 2000
+  hostAliases:
+    - ip: 10.0.0.1
+      hostnames: [internal.svc]
+  dnsPolicy: ClusterFirst
+  # Example of passing through an unmodeled field
+  extraSpec:
+    enableServiceLinks: false
+
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: platform
+    effect: NoSchedule
+
+# User-defined affinity (when non-empty, replaces the entire default podAntiAffinity block;
+# see values-stateful.yaml for a hard anti-affinity example)
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - { key: node-type, operator: In, values: [app] }
+
+topologySpreadConstraints:
+  enabled: true
+  maxSkew: 1
+  whenUnsatisfiable: ScheduleAnyway
+  topologyKeys:
+    - topology.kubernetes.io/zone
+    - kubernetes.io/hostname
+
+volumes:
+  - { name: tmp, emptyDir: {} }
+
+service:
+  enabled: true
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  ports:
+    - { name: http, port: 80, targetPort: http, protocol: TCP }
+    - { name: grpc, port: 9090, targetPort: grpc, protocol: TCP, appProtocol: grpc }
+  annotations:
+    example.com/note: "annotations passthrough"
+
+ingress:
+  enabled: true
+  className: alb
+  hostname: comprehensive.example.com
+  extraHosts:
+    - alt.example.com
+  path: /
+  pathType: Prefix
+  alb:
+    autoConfigure: true
+    group: comprehensive
+    scheme: internal
+    targetType: ip
+    certificateArn: arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000
+    extraAnnotations:
+      alb.ingress.kubernetes.io/healthcheck-path: /healthz
+  externalDns:
+    enabled: true
+    hostnameSource: annotation-only
+  annotations:
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
+
+configMap:
+  create: true
+  data:
+    conf.yaml: |
+      log_level: info
+      port: 8080
+    # data supports template interpolation
+    release: '{{ .Release.Name }}'
+
+secret:
+  create: true
+  type: Opaque
+  stringData:
+    # Demo only! Do not put production secrets in values (they are stored in Git and Helm release storage);
+    # use external-secrets / sealed-secrets or a similar solution
+    DB_PASSWORD: demo-only-password
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/example-role
+
+autoscaling:
+  enabled: true
+  minReplicas: 4
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  metrics:
+    - type: Pods
+      pods:
+        metric: { name: http_requests_per_second }
+        target: { type: AverageValue, averageValue: "1k" }
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: "75%"
+  unhealthyPodEvictionPolicy: AlwaysAllow
+
+# Escape hatch: deploy arbitrary additional resources with the release (rendered with tpl)
+extraObjects:
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: '{{ include "dockerhelm.fullname" . }}-allow-same-ns'
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - podSelector: {}

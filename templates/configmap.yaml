@@ -1,0 +1,16 @@
+{{- if .Values.configMap.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dockerhelm.configMapName" . }}
+  labels:
+    {{- include "dockerhelm.labels" . | nindent 4 }}
+  {{- with include "dockerhelm.annotations" (dict "root" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+{{- with .Values.configMap.data }}
+data:
+  {{- tpl (toYaml .) $ | nindent 2 }}
+{{- end }}
+{{- end }}

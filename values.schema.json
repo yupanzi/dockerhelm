@@ -1,0 +1,419 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dockerhelm chart values",
+  "description": "Values for the generic Docker → Kubernetes Helm Chart. See the comments in values.yaml for field documentation.",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "hpaScalingRules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stabilizationWindowSeconds": { "type": "integer", "minimum": 0, "maximum": 3600 },
+        "selectPolicy": { "type": "string", "enum": ["Max", "Min", "Disabled"] },
+        "policies": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "value", "periodSeconds"],
+            "properties": {
+              "type": { "type": "string", "enum": ["Pods", "Percent"] },
+              "value": { "type": "integer", "minimum": 1 },
+              "periodSeconds": { "type": "integer", "minimum": 1, "maximum": 1800 }
+            }
+          }
+        }
+      }
+    },
+    "quantity": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|k|m)?$"
+    },
+    "intOrString": {
+      "oneOf": [{ "type": "integer" }, { "type": "string" }]
+    }
+  },
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Helm-reserved key injected by a parent chart when used as a subchart; this chart does not consume it"
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "commonLabels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "commonAnnotations": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["Deployment", "StatefulSet"],
+          "description": "Workload type. Other types (DaemonSet/Job) are outside the scope of this chart."
+        },
+        "replicas": { "type": "integer", "minimum": 0 },
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string", "enum": ["RollingUpdate", "Recreate"] },
+            "rollingUpdate": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "properties": {
+                "maxSurge": { "$ref": "#/definitions/intOrString" },
+                "maxUnavailable": { "$ref": "#/definitions/intOrString" }
+              }
+            }
+          }
+        },
+        "updateStrategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string", "enum": ["RollingUpdate", "OnDelete"] },
+            "rollingUpdate": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "properties": {
+                "partition": { "type": "integer", "minimum": 0 },
+                "maxUnavailable": { "$ref": "#/definitions/intOrString" }
+              }
+            }
+          }
+        },
+        "podManagementPolicy": {
+          "type": "string",
+          "enum": ["OrderedReady", "Parallel"]
+        },
+        "persistentVolumeClaimRetentionPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "whenDeleted": { "type": "string", "enum": ["Retain", "Delete"] },
+            "whenScaled": { "type": "string", "enum": ["Retain", "Delete"] }
+          }
+        },
+        "extraVolumeClaimTemplates": { "type": "array" },
+        "minReadySeconds": { "type": "integer", "minimum": 0 },
+        "revisionHistoryLimit": { "type": "integer", "minimum": 0 },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "description": "Required; the template-level fail guard rejects the default empty value (the schema validates values after merging with defaults, so minLength would not work here)"
+        },
+        "tag": { "type": "string" },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["", "Always", "IfNotPresent", "Never"],
+          "description": "Automatic when empty: pinned tags/digests use IfNotPresent; a latest fallback uses Always"
+        },
+        "pullSecrets": {
+          "type": "array",
+          "items": { "type": "object", "required": ["name"] }
+        },
+        "privateRegistries": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pullSecretName": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "container": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "workingDir": { "type": "string" },
+        "ports": { "type": "array" },
+        "env": { "type": "array" },
+        "envFrom": { "type": "array" },
+        "resources": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "livenessProbe": { "type": "object" },
+        "readinessProbe": { "type": "object" },
+        "startupProbe": { "type": "object" },
+        "lifecycle": { "type": "object" },
+        "volumeMounts": { "type": "array" }
+      }
+    },
+
+    "initContainers": { "type": "array" },
+    "extraContainers": { "type": "array" },
+
+    "pod": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "annotations": { "type": "object" },
+        "labels": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "priorityClassName": { "type": "string" },
+        "hostAliases": { "type": "array" },
+        "dnsPolicy": {
+          "type": "string",
+          "enum": ["", "ClusterFirst", "ClusterFirstWithHostNet", "Default", "None"]
+        },
+        "dnsConfig": { "type": "object" },
+        "extraSpec": { "type": "object" }
+      }
+    },
+
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+
+    "podAntiAffinity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "type": { "type": "string", "enum": ["soft", "hard"] },
+        "topologyKey": { "type": "string" }
+      }
+    },
+
+    "topologySpreadConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "maxSkew": { "type": "integer", "minimum": 1 },
+        "whenUnsatisfiable": {
+          "type": "string",
+          "enum": ["DoNotSchedule", "ScheduleAnyway"]
+        },
+        "topologyKeys": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "volumes": { "type": "array" },
+
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+        },
+        "clusterIP": { "type": "string" },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "port"],
+            "properties": {
+              "name": { "type": "string" },
+              "port": { "type": "integer" },
+              "targetPort": { "$ref": "#/definitions/intOrString" },
+              "protocol": {
+                "type": "string",
+                "enum": ["TCP", "UDP", "SCTP"]
+              },
+              "nodePort": { "type": "integer" },
+              "appProtocol": { "type": "string" }
+            }
+          }
+        },
+        "sessionAffinity": {
+          "type": "string",
+          "enum": ["", "None", "ClientIP"]
+        },
+        "externalTrafficPolicy": {
+          "type": "string",
+          "enum": ["", "Cluster", "Local"]
+        },
+        "annotations": { "type": "object" }
+      }
+    },
+
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "hostname": { "type": "string" },
+        "extraHosts": { "type": "array", "items": { "type": "string" } },
+        "path": { "type": "string" },
+        "pathType": {
+          "type": "string",
+          "enum": ["Prefix", "Exact", "ImplementationSpecific"]
+        },
+        "tls": { "type": "array" },
+        "alb": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "autoConfigure": { "type": "boolean" },
+            "group": { "type": "string" },
+            "scheme": {
+              "type": "string",
+              "enum": ["internet-facing", "internal"]
+            },
+            "targetType": { "type": "string", "enum": ["ip", "instance"] },
+            "listenPorts": { "type": "string" },
+            "sslRedirect": { "type": "string" },
+            "certificateArn": { "type": "string" },
+            "extraAnnotations": { "type": "object" }
+          }
+        },
+        "externalDns": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "hostnameSource": { "type": "string" }
+          }
+        },
+        "annotations": { "type": "object" }
+      }
+    },
+
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "storageClassName": { "type": "string" },
+        "accessModes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "ReadWriteOnce",
+              "ReadOnlyMany",
+              "ReadWriteMany",
+              "ReadWriteOncePod"
+            ]
+          }
+        },
+        "size": { "$ref": "#/definitions/quantity" },
+        "annotations": { "type": "object" },
+        "selector": { "type": "object" },
+        "existingClaim": { "type": "string" }
+      }
+    },
+
+    "configMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "data": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "rollOnChange": { "type": "boolean" }
+      }
+    },
+
+    "secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "data": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "stringData": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "rollOnChange": { "type": "boolean" }
+      }
+    },
+
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "automount": { "type": "boolean" },
+        "annotations": { "type": "object" }
+      }
+    },
+
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "minimum": 1 },
+        "maxReplicas": { "type": "integer", "minimum": 1 },
+        "targetCPUUtilizationPercentage": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Percentage relative to requests; Kubernetes allows values >100 (common for burstable workloads whose limits exceed requests)"
+        },
+        "targetMemoryUtilizationPercentage": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "metrics": { "type": "array" },
+        "behavior": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "scaleUp": { "$ref": "#/definitions/hpaScalingRules" },
+            "scaleDown": { "$ref": "#/definitions/hpaScalingRules" }
+          }
+        }
+      }
+    },
+
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minAvailable": { "$ref": "#/definitions/intOrString" },
+        "maxUnavailable": { "$ref": "#/definitions/intOrString" },
+        "unhealthyPodEvictionPolicy": {
+          "type": "string",
+          "enum": ["", "IfHealthyBudget", "AlwaysAllow"]
+        }
+      }
+    },
+
+    "extraObjects": {
+      "type": "array",
+      "items": { "type": ["object", "string"] }
+    }
+  }
+}

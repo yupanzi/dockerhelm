@@ -1,0 +1,42 @@
+{{- if .Values.service.enabled }}
+{{- if not .Values.service.ports }}
+{{- fail "service.enabled=true requires at least one port in service.ports" }}
+{{- end }}
+{{- /* A named targetPort must match a named port declared by one of the containers.
+   Otherwise the endpoint cannot resolve the port and the Service silently fails (lint/dry-run cannot detect this). */}}
+{{- $portNames := list }}
+{{- range .Values.container.ports }}{{- $portNames = append $portNames (.name | default "") }}{{- end }}
+{{- range .Values.extraContainers }}{{- range (.ports | default list) }}{{- $portNames = append $portNames (.name | default "") }}{{- end }}{{- end }}
+{{- range .Values.service.ports }}
+{{- if and .targetPort (kindIs "string" .targetPort) (not (has .targetPort $portNames)) }}
+{{- fail (printf "service.ports[%s].targetPort=%q is a named port, but no container declares it in ports; add {name: %s, containerPort: <port>} to container.ports" .name .targetPort .targetPort) }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dockerhelm.fullname" . }}
+  labels:
+    {{- include "dockerhelm.labels" . | nindent 4 }}
+  {{- with include "dockerhelm.annotations" (dict "root" . "extra" .Values.service.annotations) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- with .Values.service.clusterIP }}
+  clusterIP: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.service.sessionAffinity }}
+  sessionAffinity: {{ . }}
+  {{- end }}
+  {{- /* externalTrafficPolicy is valid only for NodePort/LoadBalancer;
+     Kubernetes >= 1.26 rejects it on ClusterIP. */}}
+  {{- if and .Values.service.externalTrafficPolicy (or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer")) }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  ports:
+    {{- toYaml .Values.service.ports | nindent 4 }}
+  selector:
+    {{- include "dockerhelm.selectorLabels" . | nindent 4 }}
+{{- end }}

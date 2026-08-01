@@ -1,0 +1,33 @@
+{{- if eq .Values.workload.kind "Deployment" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dockerhelm.fullname" . }}
+  labels:
+    {{- include "dockerhelm.labels" . | nindent 4 }}
+  {{- with include "dockerhelm.annotations" (dict "root" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.workload.replicas }}
+  {{- end }}
+  revisionHistoryLimit: {{ .Values.workload.revisionHistoryLimit }}
+  minReadySeconds: {{ .Values.workload.minReadySeconds }}
+  strategy:
+    {{- include "dockerhelm.rolloutStrategy" .Values.workload.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "dockerhelm.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with include "dockerhelm.podAnnotations" . }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "dockerhelm.podLabels" . | nindent 8 }}
+    spec:
+      {{- include "dockerhelm.podSpec" . | trim | nindent 6 }}
+{{- end }}

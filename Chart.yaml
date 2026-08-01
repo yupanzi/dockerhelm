@@ -1,0 +1,38 @@
+apiVersion: v2
+name: dockerhelm
+description: |
+  Generic Helm chart that turns any Docker image into a production-grade
+  Kubernetes workload (Deployment or StatefulSet) with zero-downtime defaults:
+  aggressive rolling updates, PodDisruptionBudget, topology spread and
+  graceful preStop draining.
+type: application
+
+# Semantic version, managed by semantic-release: Conventional Commits on master decide the next
+# version, which is written here automatically (do not bump by hand; see CLAUDE.md → Release)
+version: 1.0.0
+
+# This chart has no default image (image.repository is required). appVersion is used only for the
+# app.kubernetes.io/version label and is kept in sync with the chart version by semantic-release
+appVersion: "1.0.0"
+
+# The minimum is determined by the fields used: StatefulSet minReadySeconds became GA in 1.25;
+# PDB unhealthyPodEvictionPolicy requires >=1.27 and is gated by Capabilities in the template
+kubeVersion: ">=1.25.0-0"
+
+home: https://github.com/yupanzi/dockerhelm
+sources:
+  - https://github.com/yupanzi/dockerhelm
+
+maintainers:
+  - name: yupanzi
+    url: https://github.com/yupanzi
+
+keywords:
+  - docker
+  - deployment
+  - statefulset
+  - generic
+  - zero-downtime
+
+annotations:
+  artifacthub.io/license: MIT

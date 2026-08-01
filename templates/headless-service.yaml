@@ -1,0 +1,46 @@
+{{/*
+Governing headless Service for StatefulSet (always created).
+Stable StatefulSet network identities (pod-0.<svc>.<ns>.svc DNS records) depend on a
+Service with clusterIP: None, and spec.serviceName must reference it. A regular ClusterIP
+Service does not provide per-pod DNS. The regular Service enabled by service.enabled provides
+client load-balanced access; the two do not interfere with each other.
+publishNotReadyAddresses: true gives non-Ready pods DNS records, which database applications
+may need for initial peer discovery (for example, cluster bootstrap).
+*/}}
+{{- if eq .Values.workload.kind "StatefulSet" }}
+{{- /* Kubernetes requires a name for every Service port when there are multiple ports (unlike container ports).
+   Fail fast and point users to the actual fix instead of letting the API server reject the installation midway. */}}
+{{- if gt (len .Values.container.ports) 1 }}
+{{- range .Values.container.ports }}
+{{- if not .name }}
+{{- fail (printf "every StatefulSet container.ports entry must have a name when multiple ports are declared (containerPort=%v is missing name); Kubernetes requires names on a multi-port headless Service" .containerPort) }}
+{{- end }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dockerhelm.headlessServiceName" . }}
+  labels:
+    {{- include "dockerhelm.labels" . | nindent 4 }}
+  {{- with include "dockerhelm.annotations" (dict "root" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "dockerhelm.selectorLabels" . | nindent 4 }}
+  {{- with .Values.container.ports }}
+  ports:
+    {{- range . }}
+    - port: {{ .containerPort }}
+      targetPort: {{ .containerPort }}
+      protocol: {{ .protocol | default "TCP" }}
+      {{- with .name }}
+      name: {{ . }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}

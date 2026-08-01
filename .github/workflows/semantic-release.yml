@@ -1,0 +1,55 @@
+# Push to master → runs only after ci.yml succeeds (workflow_run gate) → Conventional Commits
+# decide the version (feat=minor, fix=patch, !=major) → bump Chart.yaml + CHANGELOG, tag
+# v<version>, push OCI to GHCR, create a GitHub Release. Publishing happens inside this
+# workflow: tags pushed with GITHUB_TOKEN never trigger release.yml (GitHub suppresses those
+# runs). release.yml is the manual fallback — use it only while this workflow is disabled.
+name: Semantic Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write # Release commit, tag and GitHub Release
+  packages: write # Push the OCI chart to ghcr.io
+  issues: write # @semantic-release/github comments on issues resolved by the release
+  pull-requests: write # @semantic-release/github comments on released PRs
+
+# Never run two releases at once; queue instead of cancelling so no push is skipped
+concurrency:
+  group: semantic-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Release only pushes to master whose CI succeeded ('push' excludes PR/fork CI runs)
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # semantic-release derives the next version from the full tag/commit history
+          fetch-depth: 0
+
+      - uses: azure/setup-helm@v4
+        with:
+          # Pin the version to avoid hidden breakage from a major update to latest
+          version: v4.2.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Log in to GHCR (used by helm push inside semantic-release)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # npm ci installs the exact-pinned lockfile; .helmignore keeps node_modules,
+        # package*.json and CHANGELOG.md out of the chart package
+        run: |
+          npm ci
+          npx semantic-release

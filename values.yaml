@@ -1,0 +1,431 @@
+# ============================================================
+# Default values for dockerhelm
+# Generic Docker → Kubernetes Helm Chart (Deployment / StatefulSet)
+# Design principles:
+#   1) Prefer native Kubernetes names (the schema serves as documentation)
+#   2) Production-ready, zero-downtime defaults
+#   3) Pass through common fields and explicitly gate uncommon features
+# ============================================================
+
+# Name overrides (defaults to Chart.Name / Release.Name-Chart.Name when empty)
+nameOverride: ""
+fullnameOverride: ""
+
+# Labels / annotations added to every resource created by this chart
+# (for cost allocation, GitOps tracking, and similar use cases)
+commonLabels: {}
+commonAnnotations: {}
+
+# ============================================================
+# Workload (core)
+# ============================================================
+workload:
+  # Explicit workload type: Deployment | StatefulSet
+  kind: Deployment
+  replicas: 1
+
+  # Deployment rollout strategy (aggressive default: always maintain 100% capacity during upgrades)
+  # When type is Recreate, the template automatically omits rollingUpdate (no need to set it to null)
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: "50%"
+      maxUnavailable: 0
+
+  # StatefulSet rollout strategy; when type is OnDelete, the template automatically omits rollingUpdate
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  # OrderedReady (default) updates pods sequentially; Parallel starts and stops them concurrently
+  podManagementPolicy: OrderedReady
+
+  # StatefulSet PVC retention policy (Kubernetes >= 1.27), for example:
+  # persistentVolumeClaimRetentionPolicy:
+  #   whenDeleted: Retain
+  #   whenScaled: Retain
+  persistentVolumeClaimRetentionPolicy: {}
+
+  # Additional StatefulSet volumeClaimTemplates (native Kubernetes structures passed through;
+  # mount them by metadata.name through container.volumeMounts)
+  extraVolumeClaimTemplates: []
+
+  # Seconds a pod must remain Ready before it is considered healthy, preventing startup flapping
+  minReadySeconds: 5
+  # Number of old ReplicaSets to retain for rollback
+  revisionHistoryLimit: 10
+  # Graceful pod termination period; must be >= preStop sleep + application shutdown time
+  terminationGracePeriodSeconds: 60
+
+# ============================================================
+# Image (repository is required; this chart has no default image,
+# so you should deploy your project's own image)
+# ============================================================
+image:
+  # Required, for example ghcr.io/acme/myapp (an empty value fails immediately during Helm rendering)
+  repository: ""
+  # Empty falls back to latest; pin a specific version or use a digest in production
+  tag: ""
+  # When non-empty, takes precedence over tag for an immutable digest deployment (for example, "sha256:abc...")
+  digest: ""
+  # When empty, selected from the effective reference: digest or a non-latest tag → IfNotPresent (reduces pull churn);
+  # effective tag latest (fallback or explicit) → Always (otherwise nodes can remain pinned to a stale cached latest)
+  pullPolicy: ""
+
+  # Explicit imagePullSecrets; when non-empty, these take precedence over privateRegistries auto-detection
+  pullSecrets: []
+  # Example: pullSecrets: [{name: regcred}]
+
+  # When the repository registry host (before the first /) exactly matches an item in this list,
+  # automatically inject the imagePullSecret named by pullSecretName
+  # Example: privateRegistries: [registry.example.com]
+  privateRegistries: []
+  # Name of the automatically injected secret (must already exist in the target namespace)
+  pullSecretName: regcred
+
+# ============================================================
+# Main container (native Kubernetes fields are passed through directly)
+# ============================================================
+container:
+  # Container name; empty uses Chart.Name
+  name: ""
+
+  # Container entrypoint
+  command: []
+  args: []
+  workingDir: ""
+
+  # Multiple ports (may be defined without service.enabled;
+  # the StatefulSet headless Service also takes its ports from here)
+  ports: []
+  # Example:
+  # ports:
+  #   - name: http
+  #     containerPort: 8080
+  #     protocol: TCP
+  #   - name: grpc
+  #     containerPort: 9090
+  #     protocol: TCP
+
+  # Environment variables (supports Helm template interpolation, such as value: '{{ .Release.Name }}')
+  env: []
+  # Example:
+  # env:
+  #   - name: LOG_LEVEL
+  #     value: info
+  #   - name: POD_IP
+  #     valueFrom:
+  #       fieldRef:
+  #         fieldPath: status.podIP
+
+  # Import environment variables in bulk from a ConfigMap / Secret
+  envFrom: []
+  # Example:
+  # envFrom:
+  #   - configMapRef:
+  #       name: app-config
+  #   - secretRef:
+  #       name: app-secret
+
+  # Resources (setting requests/limits is strongly recommended)
+  resources: {}
+  # Example:
+  # resources:
+  #   requests:
+  #     cpu: 100m
+  #     memory: 128Mi
+  #   limits:
+  #     cpu: 500m
+  #     memory: 512Mi
+
+  # Container-level securityContext. Two hardening settings that are safe for almost any image are enabled by default;
+  # enable stricter settings (PSS restricted) when supported by the image:
+  #   runAsNonRoot: true
+  #   runAsUser: 1000
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop: [ALL]
+  securityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Three probe types (configured independently and not tied to service.enabled)
+  livenessProbe: {}
+  readinessProbe: {}
+  startupProbe: {}
+  # Example:
+  # readinessProbe:
+  #   httpGet: { path: /healthz, port: http }
+  #   initialDelaySeconds: 5
+  #   periodSeconds: 10
+
+  # Lifecycle: sleep for 15s by default to allow time for endpoint removal (critical for zero downtime).
+  # Set lifecycle: null to disable this for images without /bin/sh (such as distroless).
+  # Do not use {}; an empty map does not remove defaults under Helm's deep merge.
+  lifecycle:
+    preStop:
+      exec:
+        command: ["/bin/sh", "-c", "sleep 15"]
+
+  # Additional volume mounts (used with volumes / persistence below)
+  volumeMounts: []
+
+# ============================================================
+# Multiple containers (init / sidecar)
+# Raw pass-through for easy integration with Envoy / log shippers / config reloaders
+# ============================================================
+initContainers: []
+extraContainers: []
+
+# ============================================================
+# Pod-level configuration
+# ============================================================
+pod:
+  annotations: {}
+  labels: {}
+  # Pod-level securityContext (fsGroup, etc.)
+  securityContext: {}
+  priorityClassName: ""
+  hostAliases: []
+  dnsPolicy: ""
+  dnsConfig: {}
+  # Pass through unmodeled podSpec fields unchanged (hostNetwork / shareProcessNamespace /
+  # schedulerName / runtimeClassName, etc.); do not duplicate modeled fields
+  extraSpec: {}
+
+# ============================================================
+# Scheduling (zero-downtime defaults: high availability + failure-domain spreading)
+# ============================================================
+nodeSelector: {}
+
+tolerations: []
+# Example:
+# tolerations:
+#   - key: dedicated
+#     operator: Equal
+#     value: app
+#     effect: NoSchedule
+
+# Custom affinity (passed through directly when non-empty, overriding the podAntiAffinity defaults below)
+affinity: {}
+
+# Default soft anti-affinity: spread replicas across nodes
+podAntiAffinity:
+  enabled: true
+  # soft: preferredDuringScheduling (can relax when resources are constrained)
+  # hard: requiredDuringScheduling (enforced; pods remain Pending when there are too few nodes)
+  type: soft
+  topologyKey: kubernetes.io/hostname
+
+# Default topology spread constraints: distribute as evenly as possible across AZs + nodes
+topologySpreadConstraints:
+  enabled: true
+  maxSkew: 1
+  # ScheduleAnyway is a soft constraint (recommended); DoNotSchedule is a hard constraint
+  whenUnsatisfiable: ScheduleAnyway
+  topologyKeys:
+    - topology.kubernetes.io/zone
+    - kubernetes.io/hostname
+
+# ============================================================
+# Additional volumes (passed through; used with container.volumeMounts / extraContainers)
+# ============================================================
+volumes: []
+# Example:
+# volumes:
+#   - name: cache
+#     emptyDir: {}
+#   - name: extra-config
+#     configMap:
+#       name: extra-config
+
+# ============================================================
+# Service (multiple ports)
+# ============================================================
+service:
+  enabled: false
+  type: ClusterIP
+  # "None" → headless (StatefulSet already creates a dedicated headless Service automatically;
+  # normally keep this as a regular ClusterIP for client load-balanced access)
+  clusterIP: ""
+  # When targetPort is named, a port with that name must be declared in container.ports (or sidecar ports),
+  # otherwise Kubernetes cannot resolve the endpoint; the template enforces this during Helm rendering
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  # Use ClientIP to enable sticky sessions
+  sessionAffinity: ""
+  # Cluster | Local (Local preserves the client IP and is valid only for NodePort/LoadBalancer)
+  externalTrafficPolicy: ""
+  annotations: {}
+
+# ============================================================
+# Ingress
+# Minimal generic defaults; AWS ALB users can enable alb.autoConfigure to generate
+# aws-load-balancer-controller annotations automatically
+# ============================================================
+ingress:
+  enabled: false
+  # Empty uses the cluster's default IngressClass
+  className: ""
+  # When enabled=true, at least one of hostname or extraHosts is required (enforced by the template)
+  hostname: ""
+  extraHosts: []
+  path: "/"
+  pathType: Prefix
+  # Standard Kubernetes Ingress TLS configuration
+  tls: []
+
+  # Automatic AWS ALB configuration (optional; requires aws-load-balancer-controller in the cluster)
+  alb:
+    autoConfigure: false
+    # Share one ALB across multiple Ingress resources
+    group: ""
+    # Defaults to internal; explicitly use internet-facing for public exposure
+    scheme: internal
+    targetType: ip
+    # Must include an HTTP listener for sslRedirect (HTTP→HTTPS) to have a source listener
+    listenPorts: '[{"HTTP":80},{"HTTPS":443}]'
+    sslRedirect: "443"
+    # ACM certificate ARN (the annotation is omitted when empty)
+    certificateArn: ""
+    # Any additional alb.ingress.kubernetes.io/* annotations
+    extraAnnotations: {}
+
+  # Automatic external-dns registration (optional; requires external-dns in the cluster)
+  # In annotation-only mode, hostname and extraHosts are written together to the
+  # hostname annotation (comma-separated), registering all of them in DNS
+  externalDns:
+    enabled: false
+    hostnameSource: annotation-only
+
+  # User-defined annotations (highest priority; override generated alb / externalDns annotations)
+  annotations: {}
+
+# ============================================================
+# Persistence
+#   - StatefulSet: automatically created through volumeClaimTemplates (one PVC per replica)
+#   - Deployment: renders a standalone PVC named {fullname}-{name}
+#                 Multiple replicas must share it with ReadWriteMany, or cross-node scheduling fails with Multi-Attach
+#   - existingClaim non-empty: skip creation and mount the existing PVC directly
+# ============================================================
+persistence:
+  enabled: false
+  # PVC name (also the volumeMount reference name; in Deployment mode the actual PVC name is {fullname}-{name})
+  name: data
+  # Empty uses the cluster's default StorageClass
+  storageClassName: ""
+  # Native Kubernetes array form
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  annotations: {}
+  # PVC selector (for binding a specific PV)
+  selector: {}
+  # Reuse an existing PVC and skip chart-managed creation.
+  # StatefulSet normally uses volumeClaimTemplates, but existingClaim is mounted as a volume when set (shared-volume use case)
+  existingClaim: ""
+
+# ============================================================
+# ConfigMap (data values support Helm template interpolation)
+# ============================================================
+configMap:
+  create: false
+  # Empty uses fullname
+  name: ""
+  data: {}
+  # Whether data changes trigger a pod rollout (when disabled, changing the ConfigMap with helm upgrade does not restart pods)
+  rollOnChange: true
+
+# ============================================================
+# Secret
+# Warning: secrets written into values are stored in Git and Helm release storage
+# (`helm get values` exposes them in plaintext). Manage production secrets with
+# external-secrets / sealed-secrets and only reference them here (envFrom.secretRef)
+# ============================================================
+secret:
+  create: false
+  name: ""
+  type: Opaque
+  # Base64-encoded values
+  data: {}
+  # Plaintext (Kubernetes encodes it as base64; supports Helm template interpolation)
+  stringData: {}
+  # Warning: rollOnChange writes a sha256 of secret contents into a pod annotation.
+  # Low-entropy passwords have a theoretical offline-enumeration risk; high-entropy secrets are not practically affected
+  rollOnChange: true
+
+# ============================================================
+# ServiceAccount
+# ============================================================
+serviceAccount:
+  create: true
+  name: ""
+  # Do not automount the API token by default (least privilege); set true if the application needs Kubernetes API access
+  automount: false
+  annotations: {}
+
+# ============================================================
+# HPA
+# ============================================================
+autoscaling:
+  enabled: false
+  # A PDB is not created when minReplicas=1 (to avoid blocking node maintenance);
+  # use >= 2 for zero-downtime protection
+  minReplicas: 1
+  maxReplicas: 10
+  # Integer from 1-100; null disables the metric
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: null
+
+  # Fully custom metrics (when non-empty, override CPU/Memory above)
+  metrics: []
+  # Example:
+  # metrics:
+  #   - type: Pods
+  #     pods:
+  #       metric: { name: requests_per_second }
+  #       target: { type: AverageValue, averageValue: "1k" }
+
+  # Native Kubernetes behavior structure (empty uses cluster defaults; a policies array cannot be empty once specified;
+  # use selectPolicy: Disabled to disable a scaling direction)
+  behavior: {}
+  # Example:
+  # behavior:
+  #   scaleDown:
+  #     stabilizationWindowSeconds: 300
+  #     policies:
+  #       - type: Percent
+  #         value: 50
+  #         periodSeconds: 60
+
+# ============================================================
+# PodDisruptionBudget (critical for zero downtime; applies only when replicas > 1)
+# ============================================================
+podDisruptionBudget:
+  enabled: true
+  # Choose minAvailable or maxUnavailable (minAvailable wins when both are set; 0 is valid)
+  minAvailable: "50%"
+  maxUnavailable: ""
+  # Allow eviction of unhealthy pods outside the budget to avoid blocking node maintenance
+  # (requires Kubernetes >= 1.27; the template gates it automatically by cluster version)
+  unhealthyPodEvictionPolicy: AlwaysAllow
+
+# ============================================================
+# Escape hatch: deploy arbitrary additional Kubernetes resources with the release
+# (ServiceMonitor / NetworkPolicy / ExternalSecret, etc.)
+# List items may be objects or strings; both are rendered as Helm templates (tpl)
+# ============================================================
+extraObjects: []
+# Example:
+# extraObjects:
+#   - apiVersion: networking.k8s.io/v1
+#     kind: NetworkPolicy
+#     metadata:
+#       name: '{{ include "dockerhelm.fullname" . }}-default-deny'
+#     spec:
+#       podSelector: {}
+#       policyTypes: [Ingress]

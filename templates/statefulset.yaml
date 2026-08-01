@@ -1,0 +1,69 @@
+{{- if eq .Values.workload.kind "StatefulSet" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "dockerhelm.fullname" . }}
+  labels:
+    {{- include "dockerhelm.labels" . | nindent 4 }}
+  {{- with include "dockerhelm.annotations" (dict "root" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- /* headless-service.yaml always creates the governing headless Service.
+     The helper synchronizes its name from one source, keeping stable network identities (pod-0.<svc> DNS) available. */}}
+  serviceName: {{ include "dockerhelm.headlessServiceName" . }}
+  podManagementPolicy: {{ .Values.workload.podManagementPolicy }}
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.workload.replicas }}
+  {{- end }}
+  revisionHistoryLimit: {{ .Values.workload.revisionHistoryLimit }}
+  minReadySeconds: {{ .Values.workload.minReadySeconds }}
+  updateStrategy:
+    {{- include "dockerhelm.rolloutStrategy" .Values.workload.updateStrategy | nindent 4 }}
+  {{- with .Values.workload.persistentVolumeClaimRetentionPolicy }}
+  persistentVolumeClaimRetentionPolicy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "dockerhelm.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with include "dockerhelm.podAnnotations" . }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "dockerhelm.podLabels" . | nindent 8 }}
+    spec:
+      {{- include "dockerhelm.podSpec" . | trim | nindent 6 }}
+  {{- $ownVct := and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+  {{- if or $ownVct .Values.workload.extraVolumeClaimTemplates }}
+  volumeClaimTemplates:
+    {{- if $ownVct }}
+    - metadata:
+        name: {{ .Values.persistence.name }}
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size | quote }}
+        {{- with .Values.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        {{- with .Values.persistence.selector }}
+        selector:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+    {{- end }}
+    {{- with .Values.workload.extraVolumeClaimTemplates }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+{{- end }}

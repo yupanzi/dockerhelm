@@ -1,0 +1,78 @@
+{{- if .Values.ingress.enabled }}
+{{- /* Validate up front so invalid configuration fails during Helm rendering instead of returning 503 after installation */}}
+{{- if not .Values.service.enabled }}
+{{- fail "ingress.enabled=true requires service.enabled=true (the Ingress backend references this chart's Service)" }}
+{{- end }}
+{{- if not .Values.service.ports }}
+{{- fail "ingress.enabled=true requires at least one port in service.ports" }}
+{{- end }}
+{{- $allHosts := compact (prepend .Values.ingress.extraHosts .Values.ingress.hostname) }}
+{{- if not $allHosts }}
+{{- fail "ingress.enabled=true requires at least one non-empty hostname in ingress.hostname or ingress.extraHosts (an empty host creates a dangerous catch-all rule)" }}
+{{- end }}
+{{- $fullName := include "dockerhelm.fullname" . -}}
+{{- /*
+  Annotation precedence (high → low; higher priority overrides after merge):
+    1) ingress.annotations          highest user priority
+    2) ingress.externalDns (if enabled) automatic external-dns configuration
+    3) ingress.alb.extraAnnotations + generated annotations (when autoConfigure is enabled)
+    4) commonAnnotations
+*/ -}}
+{{- $autoAnno := dict -}}
+{{- if .Values.ingress.alb.autoConfigure -}}
+  {{- $_ := set $autoAnno "alb.ingress.kubernetes.io/listen-ports" .Values.ingress.alb.listenPorts -}}
+  {{- $_ := set $autoAnno "alb.ingress.kubernetes.io/ssl-redirect" .Values.ingress.alb.sslRedirect -}}
+  {{- $_ := set $autoAnno "alb.ingress.kubernetes.io/scheme" .Values.ingress.alb.scheme -}}
+  {{- $_ := set $autoAnno "alb.ingress.kubernetes.io/target-type" .Values.ingress.alb.targetType -}}
+  {{- with .Values.ingress.alb.certificateArn -}}
+    {{- $_ := set $autoAnno "alb.ingress.kubernetes.io/certificate-arn" . -}}
+  {{- end -}}
+  {{- with .Values.ingress.alb.group -}}
+    {{- $_ := set $autoAnno "alb.ingress.kubernetes.io/group.name" . -}}
+  {{- end -}}
+{{- end -}}
+{{- range $k, $v := .Values.ingress.alb.extraAnnotations -}}
+  {{- $_ := set $autoAnno $k $v -}}
+{{- end -}}
+{{- if .Values.ingress.externalDns.enabled -}}
+  {{- $_ := set $autoAnno "external-dns.alpha.kubernetes.io/ingress-hostname-source" .Values.ingress.externalDns.hostnameSource -}}
+  {{- /* In annotation-only mode, external-dns reads only this annotation.
+     Include both hostname and extraHosts (comma-separated) so all are registered in DNS. */ -}}
+  {{- $_ := set $autoAnno "external-dns.alpha.kubernetes.io/hostname" (join "," $allHosts) -}}
+{{- end -}}
+{{- /* merge mutates its first argument; deepCopy prevents changes to .Values.
+   Merge commonAnnotations through the dockerhelm.annotations helper as the single point of control. */ -}}
+{{- $extraAnno := merge (deepCopy (.Values.ingress.annotations | default dict)) $autoAnno -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "dockerhelm.labels" . | nindent 4 }}
+  {{- with include "dockerhelm.annotations" (dict "root" . "extra" $extraAnno) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- $svcPort := (index .Values.service.ports 0).name }}
+    {{- range $allHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: {{ $.Values.ingress.path }}
+            pathType: {{ $.Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  name: {{ $svcPort }}
+    {{- end }}
+{{- end }}
