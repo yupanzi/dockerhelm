@@ -1,0 +1,21 @@
+{{/* One-shot Jobs, always Helm hooks. Shared rules live in _job.tpl */}}
+{{- range $key, $job := .Values.jobs }}
+{{- /* null drops an entry from a later values file; {} still goes through the checks below */}}
+{{- if not (kindIs "invalid" $job) }}
+{{- if not (dig "annotations" "helm.sh/hook" "" $job) }}
+{{- fail (printf "jobs.%s: annotations.\"helm.sh/hook\" is required (e.g. pre-install,pre-upgrade); a plain Job's pod template is immutable, so the next helm upgrade that changes the image would fail" $key) }}
+{{- end }}
+{{- $ctx := dict "root" $ "key" $key "job" $job "kind" "Job" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  {{- include "dockerhelm.jobMetadata" $ctx | nindent 2 }}
+spec:
+  {{- with $job.spec }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+  template:
+    {{- include "dockerhelm.jobPodTemplate" $ctx | nindent 4 }}
+{{- end }}
+{{- end }}

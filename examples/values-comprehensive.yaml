@@ -208,6 +208,56 @@ podDisruptionBudget:
   minAvailable: "75%"
   unhealthyPodEvictionPolicy: AlwaysAllow
 
+# Same image, other entrypoints. env is per entry (not inherited); YAML anchors share it.
+# Job pods inherit tolerations and securityContext from the top level (empty here)
+jobs:
+  migrate:
+    annotations:
+      helm.sh/hook: pre-install,pre-upgrade
+      helm.sh/hook-weight: "-5"
+    container:
+      command: ["/app/bin/server", "migrate"]
+      env:
+        - &db-password
+          name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef: { name: comp-db, key: password }
+        - name: RELEASE_NAME
+          value: '{{ .Release.Name }}'
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { memory: 256Mi }
+      volumeMounts:
+        - { name: tmp, mountPath: /tmp }
+    volumes:
+      - { name: tmp, emptyDir: {} }
+    pod:
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      ttlSecondsAfterFinished: 3600
+
+cronJobs:
+  report:
+    spec:
+      schedule: "0 9 * * 1-5"
+      timeZone: Asia/Shanghai
+      startingDeadlineSeconds: 600
+      successfulJobsHistoryLimit: 3
+    jobSpec:
+      backoffLimit: 2
+      podFailurePolicy:
+        rules:
+          - action: Ignore
+            onPodConditions: [{ type: DisruptionTarget }]
+    nodeSelector:
+      node-type: batch
+    container:
+      command: ["/app/bin/server", "report"]
+      env: [*db-password]
+
 # Escape hatch: deploy arbitrary additional resources with the release (rendered with tpl)
 extraObjects:
   - apiVersion: networking.k8s.io/v1

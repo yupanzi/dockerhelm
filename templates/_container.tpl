@@ -1,5 +1,6 @@
 {{/*
-Main container spec (passes through native Kubernetes fields without implicit mounts).
+Container spec (passes through native Kubernetes fields without implicit mounts), shared by the main
+container (_podSpec.tpl) and job containers (_job.tpl); fields a job entry does not allow simply render nothing.
 Volumes are created by _podSpec.tpl, while users explicitly declare mount points in
 container.volumeMounts, keeping creation and use decoupled. Reference-name convention
 for chart-created volumes:
@@ -7,66 +8,62 @@ for chart-created volumes:
   secret           Secret (exists when secret.create=true)
   {{ .Values.persistence.name }}   PVC (exists when persistence.enabled=true)
 env / envFrom are rendered with tpl, so values may use expressions such as {{ include "dockerhelm.fullname" . }}.
+Call: include "dockerhelm.container" (dict "root" $ "c" <container values> "name" <container name>)
 */}}
 {{- define "dockerhelm.container" -}}
-- name: {{ .Values.container.name | default .Chart.Name }}
-  image: {{ include "dockerhelm.imageRef" . | quote }}
-  {{- /* When pullPolicy is empty, select from the effective reference: digest or non-latest tag → IfNotPresent;
-     effective tag latest (fallback, explicit latest, or tag set to null) → Always.
-     IfNotPresent+latest would pin nodes to a stale cached image. */}}
-  {{- $autoPolicy := "IfNotPresent" }}
-  {{- if and (not .Values.image.digest) (eq (.Values.image.tag | default "latest") "latest") }}
-  {{- $autoPolicy = "Always" }}
-  {{- end }}
-  imagePullPolicy: {{ .Values.image.pullPolicy | default $autoPolicy }}
-  {{- with .Values.container.command }}
+{{- $root := .root -}}
+{{- $c := .c -}}
+- name: {{ .name }}
+  image: {{ include "dockerhelm.imageRef" $root | quote }}
+  imagePullPolicy: {{ include "dockerhelm.imagePullPolicy" $root }}
+  {{- with $c.command }}
   command:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.args }}
+  {{- with $c.args }}
   args:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.workingDir }}
+  {{- with $c.workingDir }}
   workingDir: {{ . | quote }}
   {{- end }}
-  {{- with .Values.container.ports }}
+  {{- with $c.ports }}
   ports:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.env }}
+  {{- with $c.env }}
   env:
-    {{- tpl (toYaml .) $ | nindent 4 }}
+    {{- tpl (toYaml .) $root | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.envFrom }}
+  {{- with $c.envFrom }}
   envFrom:
-    {{- tpl (toYaml .) $ | nindent 4 }}
+    {{- tpl (toYaml .) $root | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.resources }}
+  {{- with $c.resources }}
   resources:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.securityContext }}
+  {{- with $c.securityContext }}
   securityContext:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.livenessProbe }}
+  {{- with $c.livenessProbe }}
   livenessProbe:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.readinessProbe }}
+  {{- with $c.readinessProbe }}
   readinessProbe:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.startupProbe }}
+  {{- with $c.startupProbe }}
   startupProbe:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.lifecycle }}
+  {{- with $c.lifecycle }}
   lifecycle:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.container.volumeMounts }}
+  {{- with $c.volumeMounts }}
   volumeMounts:
     {{- toYaml . | nindent 4 }}
   {{- end }}

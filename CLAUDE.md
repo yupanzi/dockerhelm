@@ -20,7 +20,9 @@ An open-source, generic Helm chart (`oci://ghcr.io/yupanzi/charts/dockerhelm`, M
 templates/
 ├── _helpers.tpl           # Naming / labels / annotations / pullSecrets / affinity / pdbWillCreate / headlessServiceName
 ├── _podSpec.tpl           # Shared spec.template.spec fragment (Deployment / StatefulSet)
-├── _container.tpl         # Main container definition (passes through container.*; env/envFrom use tpl)
+├── _container.tpl         # Container definition shared by the main and job containers (passes fields through; env/envFrom use tpl)
+├── _job.tpl               # Job name / labels / metadata / pod template shared by jobs.yaml / cronjobs.yaml
+├── jobs.yaml / cronjobs.yaml  # jobs.<key> (always Helm hooks) / cronJobs.<key>, same image as the main workload
 ├── deployment.yaml        # workload.kind == Deployment
 ├── statefulset.yaml       # workload.kind == StatefulSet (includes volumeClaimTemplates)
 ├── headless-service.yaml  # Governing headless Service for StatefulSet (always created)
@@ -64,6 +66,12 @@ package.json + lockfile    # Exact-pinned release toolchain (npm ci in the workf
 9. **Sprig `merge` mutates its first argument**
    Whenever merging a map from `.Values`, the first argument must be a `deepCopy` (see `dockerhelm.annotations` / `podAnnotations` / Ingress annotations).
 
+10. **Job pods never carry `app.kubernetes.io/name`**
+   The main Service / PDB / anti-affinity / topology spread select on name+instance; a leaked label routes Service traffic to a running migration pod. `dockerhelm.jobPodTemplate` `omit`s it even when commonLabels / pod.labels set it; CI has a regression check. Job pods therefore do not reuse `_podSpec.tpl` (it carries selector-based affinity); they share `dockerhelm.container` and `dockerhelm.serviceAccountFields` instead.
+
+11. **Every `jobs.<key>` is a Helm hook, and hook Jobs never reference the chart-created ServiceAccount**
+   A plain Job's pod template is immutable (the next upgrade that changes the image fails), so the template `fail`s without `helm.sh/hook`. pre-install hooks run before any release resource exists, so a reference to the chart-created ServiceAccount would leave the Job without pods until the hook times out (`dockerhelm.serviceAccountFields` decides this from the hook annotation). Job entries never inherit `container.env` (least privilege; Helm cannot merge lists).
+
 ## Change Checklist
 
 | Change | Also check |
@@ -72,7 +80,7 @@ package.json + lockfile    # Exact-pinned release toolchain (npm ci in the workf
 | Delete/rename a field | Mark the commit `feat!:` / `BREAKING CHANGE:` (semantic-release majors the version) + explain it in README (the schema rejects old fields) |
 | Change a default | Keep README/values comments in sync; document upgrade-impacting behavior in release notes |
 | Add a condition used across templates | Extract it into a helper (following `dockerhelm.pdbWillCreate`); do not inline it in multiple places |
-| Modify `_podSpec.tpl` | Validate both the Deployment and StatefulSet paths |
+| Modify `_podSpec.tpl` / `_container.tpl` | Validate both the Deployment and StatefulSet paths; `_container.tpl` also renders job containers, and a pod-level security or scheduling default probably belongs in `_job.tpl` too |
 | Use a newer Kubernetes field | Check `kubeVersion` (>=1.25) and gate with `.Capabilities.KubeVersion` when needed (see pdb.yaml) |
 
 ## Known Pitfalls
@@ -97,7 +105,7 @@ helm template test . -f examples/values-comprehensive.yaml > /dev/null
 helm template test . -f examples/values-comprehensive.yaml | kubectl apply --dry-run=server -f -
 ```
 
-At minimum, cover: default Deployment, StatefulSet + persistence, HPA + PDB (`autoscaling.enabled=true` and `minReplicas=2`), and `strategy.type=Recreate` (confirm no stale rollingUpdate remains).
+At minimum, cover: default Deployment, StatefulSet + persistence, HPA + PDB (`autoscaling.enabled=true` and `minReplicas=2`), `strategy.type=Recreate` (confirm no stale rollingUpdate remains), and jobs / cronJobs (comprehensive example; a Job without `helm.sh/hook` must fail).
 
 ## Release
 

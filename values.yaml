@@ -415,6 +415,63 @@ podDisruptionBudget:
   unhealthyPodEvictionPolicy: AlwaysAllow
 
 # ============================================================
+# Jobs / CronJobs: the same image with another entrypoint (migrations, scheduled tasks)
+# Each map key becomes {fullname}-{key} (a DNS label). An entry mirrors the top-level shape:
+#   container    command / args / workingDir / env / envFrom / resources / securityContext / volumeMounts
+#   pod          annotations / labels / securityContext / extraSpec
+#   nodeSelector / tolerations / volumes
+# Shared with the main workload: image (+ pull secrets) and commonLabels / commonAnnotations.
+# Empty securityContext (pod and container), nodeSelector and tolerations fall back to the top-level values.
+# Everything else belongs to the entry: env is NOT inherited (least privilege: a migration does not
+# receive the web process's secrets). Share env entries with YAML anchors.
+# Job pods never carry app.kubernetes.io/name, so the main Service / PDB never select them.
+# Set an entry to null in a later values file to drop it for that environment.
+# ============================================================
+
+# One-shot Jobs. Each must be a Helm hook (annotations."helm.sh/hook", enforced by the template):
+# a plain Job's pod template is immutable, so the next upgrade that changes the image would fail.
+# A failed pre-install / pre-upgrade hook aborts the release before the workload rolls; Helm waits
+# for it within --timeout (default 5m).
+# pre-install hooks run before any release resource exists: they cannot use the chart-created
+# ConfigMap / Secret / PVC, and they never reference the chart-created ServiceAccount (an external one,
+# serviceAccount.create=false + name, is used).
+jobs: {}
+# Example (database migration before every install / upgrade):
+# jobs:
+#   migrate:
+#     annotations:
+#       helm.sh/hook: pre-install,pre-upgrade
+#       helm.sh/hook-weight: "-5"
+#     container:
+#       command: [./app, migrate]
+#       envFrom:
+#         - secretRef: { name: app-db }
+#     # Native Job spec without template
+#     spec:
+#       backoffLimit: 1
+#       ttlSecondsAfterFinished: 3600
+
+# CronJobs. spec is the native CronJob spec without jobTemplate (schedule is required; concurrencyPolicy
+# defaults to Forbid instead of Kubernetes' Allow, so a slow run never overlaps the next);
+# jobSpec is the native Job spec without template.
+cronJobs: {}
+# Example:
+# cronJobs:
+#   cleanup:
+#     spec:
+#       schedule: "0 3 * * *"
+#       timeZone: Asia/Shanghai
+#     jobSpec:
+#       backoffLimit: 2
+#       # Node drains / preemption do not count against backoffLimit
+#       podFailurePolicy:
+#         rules:
+#           - action: Ignore
+#             onPodConditions: [{ type: DisruptionTarget }]
+#     container:
+#       command: [./app, cleanup]
+
+# ============================================================
 # Escape hatch: deploy arbitrary additional Kubernetes resources with the release
 # (ServiceMonitor / NetworkPolicy / ExternalSecret, etc.)
 # List items may be objects or strings; both are rendered as Helm templates (tpl)

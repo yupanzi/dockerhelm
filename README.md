@@ -43,6 +43,7 @@ To install from local source, replace `oci://...` with the chart directory path.
 | Stateless web service | The default; enable `service.enabled` + `ingress.enabled` |
 | Stateful service (database/queue) | `workload.kind: StatefulSet` + `persistence.enabled` (automatically creates the governing headless Service) |
 | Sidecar / init container | `extraContainers` / `initContainers` (raw pass-through) |
+| Migrations / scheduled tasks (same image, other entrypoint) | `jobs` (Helm hooks, e.g. `pre-install,pre-upgrade`) / `cronJobs`; env is per entry, not inherited |
 | Autoscaling | `autoscaling.enabled: true` (use `minReplicas >= 2` for zero-downtime protection) |
 | AWS ALB integration | `ingress.className: alb` + `ingress.alb.autoConfigure: true` |
 | Arbitrary resources (NetworkPolicy, etc.) | `extraObjects` (rendered through `tpl`) |

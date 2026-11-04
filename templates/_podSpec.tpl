@@ -9,10 +9,7 @@ StatefulSet PVCs are injected through volumeClaimTemplates and are not duplicate
 {{- if $ips }}
 {{ $ips }}
 {{- end }}
-{{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
-serviceAccountName: {{ include "dockerhelm.serviceAccountName" . }}
-{{- end }}
-automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+{{- include "dockerhelm.serviceAccountFields" (dict "root" .) | nindent 0 }}
 terminationGracePeriodSeconds: {{ .Values.workload.terminationGracePeriodSeconds }}
 {{- with .Values.pod.securityContext }}
 securityContext:
@@ -37,7 +34,7 @@ initContainers:
   {{- tpl (toYaml .) $ | nindent 2 }}
 {{- end }}
 containers:
-  {{- include "dockerhelm.container" . | nindent 2 }}
+  {{- include "dockerhelm.container" (dict "root" . "c" .Values.container "name" (.Values.container.name | default .Chart.Name)) | nindent 2 }}
   {{- with .Values.extraContainers }}
   {{- tpl (toYaml .) $ | nindent 2 }}
   {{- end }}

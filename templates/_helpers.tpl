@@ -124,6 +124,27 @@ ServiceAccount name to use
 {{- end }}
 
 {{/*
+Pod-spec ServiceAccount fields, shared by the main pod and job pods.
+Hook pods never reference the chart-created ServiceAccount: pre-install hooks run before any release
+resource exists, so the pod would never be created. They use an external one (serviceAccount.create=false
++ name) or the namespace default without a token.
+Call: include "dockerhelm.serviceAccountFields" (dict "root" $ "hook" <non-empty when a Helm hook>)
+*/}}
+{{- define "dockerhelm.serviceAccountFields" -}}
+{{- $sa := .root.Values.serviceAccount -}}
+{{- $use := or $sa.create $sa.name -}}
+{{- $automount := $sa.automount -}}
+{{- if .hook -}}
+{{- $use = and (not $sa.create) (ne ($sa.name | default "") "") -}}
+{{- $automount = and $use $sa.automount -}}
+{{- end -}}
+{{- if $use -}}
+serviceAccountName: {{ include "dockerhelm.serviceAccountName" .root }}
+{{ end -}}
+automountServiceAccountToken: {{ $automount }}
+{{- end }}
+
+{{/*
 Image reference: digest takes precedence (repo@sha256:...); otherwise use repo:tag,
 falling back to latest when tag is empty. repository is required because the generic chart
 has no default image; fail fast during Helm rendering instead of producing an unusable manifest.
@@ -137,6 +158,20 @@ has no default image; fail fast during Helm rendering instead of producing an un
 {{- else -}}
 {{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default "latest") -}}
 {{- end -}}
+{{- end }}
+
+{{/*
+imagePullPolicy shared by the main container and job containers (they run the same image).
+When pullPolicy is empty, select from the effective reference: digest or non-latest tag → IfNotPresent;
+effective tag latest (fallback, explicit latest, or tag set to null) → Always.
+IfNotPresent+latest would pin nodes to a stale cached image.
+*/}}
+{{- define "dockerhelm.imagePullPolicy" -}}
+{{- $autoPolicy := "IfNotPresent" -}}
+{{- if and (not .Values.image.digest) (eq (.Values.image.tag | default "latest") "latest") -}}
+{{- $autoPolicy = "Always" -}}
+{{- end -}}
+{{- .Values.image.pullPolicy | default $autoPolicy -}}
 {{- end }}
 
 {{/*

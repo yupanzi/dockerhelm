@@ -1,0 +1,28 @@
+{{/*
+CronJobs. concurrencyPolicy defaults to Forbid instead of Kubernetes' Allow, so a slow run never overlaps
+the next. jobTemplate carries the job labels so the Jobs it creates are found by instance like everything else.
+Shared rules live in _job.tpl.
+*/}}
+{{- range $key, $cj := .Values.cronJobs }}
+{{- /* null drops an entry from a later values file (same as jobs.yaml) */}}
+{{- if not (kindIs "invalid" $cj) }}
+{{- $ctx := dict "root" $ "key" $key "job" $cj "kind" "CronJob" }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  {{- include "dockerhelm.jobMetadata" $ctx | nindent 2 }}
+spec:
+  {{- toYaml (merge (deepCopy $cj.spec) (dict "concurrencyPolicy" "Forbid")) | nindent 2 }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "dockerhelm.jobLabels" $ctx | nindent 8 }}
+    spec:
+      {{- with $cj.jobSpec }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      template:
+        {{- include "dockerhelm.jobPodTemplate" $ctx | nindent 8 }}
+{{- end }}
+{{- end }}

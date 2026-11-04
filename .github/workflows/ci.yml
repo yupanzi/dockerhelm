@@ -41,6 +41,9 @@ jobs:
         # grep matches only when rendering fails with the required-field message; successful rendering has no message and fails this step
         run: helm template test . 2>&1 | grep -q 'image.repository is required'
 
+      - name: Validate jobs must be Helm hooks (a plain Job's immutable template breaks the next upgrade)
+        run: helm template test . $DEMO_IMAGE --set 'jobs.x.container.command={echo}' 2>&1 | grep -q 'helm.sh/hook" is required'
+
       - name: Negative schema validation (unknown fields must be rejected and global must be allowed)
         run: |
           if helm template test . $DEMO_IMAGE --set replicaCount=4 > /dev/null 2>&1; then
@@ -71,6 +74,14 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Regression validation (job pods must not carry app.kubernetes.io/name; see CLAUDE.md invariant 10)
+        # yq ships with the GitHub ubuntu runner image
+        run: |
+          f=/tmp/rendered/comprehensive.yaml
+          q='[(select(.kind == "Job") | .spec.template), (select(.kind == "CronJob") | .spec.jobTemplate.spec.template)]'
+          test "$(yq ea "$q | length" "$f")" -eq 2
+          test "$(yq ea "$q | map(select(.metadata.labels | has(\"app.kubernetes.io/name\"))) | length" "$f")" -eq 0
 
       - name: Validate all rendered artifacts with kubeconform
         run: |

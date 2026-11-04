@@ -37,6 +37,21 @@
 {{- if and $paa.enabled (not .Values.affinity) }}
   • Pod Anti-Affinity: {{ $paa.type }} on {{ $paa.topologyKey }}
 {{- end }}
+{{- if or .Values.jobs .Values.cronJobs }}
+
+⏱ Jobs:
+{{- range $key, $job := .Values.jobs }}
+{{- if not (kindIs "invalid" $job) }}
+  • job/{{ include "dockerhelm.jobName" (dict "root" $ "key" $key "kind" "Job") }} (hook: {{ dig "annotations" "helm.sh/hook" "" $job }})
+{{- end }}
+{{- end }}
+{{- range $key, $cj := .Values.cronJobs }}
+{{- if not (kindIs "invalid" $cj) }}
+  • cronjob/{{ include "dockerhelm.jobName" (dict "root" $ "key" $key "kind" "CronJob") }} ({{ $cj.spec.schedule }}{{ with $cj.spec.timeZone }} {{ . }}{{ end }})
+{{- end }}
+{{- end }}
+  kubectl -n {{ .Release.Namespace }} get job,cronjob -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- end }}
 
 📡 Access:
 {{- if .Values.ingress.enabled }}

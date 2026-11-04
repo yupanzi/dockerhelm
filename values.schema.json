@@ -33,6 +33,40 @@
     },
     "intOrString": {
       "oneOf": [{ "type": "integer" }, { "type": "string" }]
+    },
+    "jobKeys": {
+      "description": "Map keys become {fullname}-{key} resource names, so they must be DNS labels",
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "jobContainer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "workingDir": { "type": "string" },
+        "env": { "type": "array" },
+        "envFrom": { "type": "array" },
+        "resources": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "volumeMounts": { "type": "array" }
+      }
+    },
+    "jobPod": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "annotations": { "type": "object" },
+        "labels": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "extraSpec": { "type": "object" }
+      }
+    },
+    "jobSpec": {
+      "description": "Native Job spec without template (the chart builds the pod template)",
+      "type": "object",
+      "not": { "required": ["template"] }
     }
   },
   "properties": {
@@ -407,6 +441,54 @@
         "unhealthyPodEvictionPolicy": {
           "type": "string",
           "enum": ["", "IfHealthyBudget", "AlwaysAllow"]
+        }
+      }
+    },
+
+    "jobs": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/definitions/jobKeys" },
+      "additionalProperties": {
+        "type": ["object", "null"],
+        "additionalProperties": false,
+        "properties": {
+          "annotations": { "type": "object" },
+          "spec": { "$ref": "#/definitions/jobSpec" },
+          "container": { "$ref": "#/definitions/jobContainer" },
+          "pod": { "$ref": "#/definitions/jobPod" },
+          "nodeSelector": { "type": "object" },
+          "tolerations": { "type": "array" },
+          "volumes": { "type": "array" }
+        }
+      }
+    },
+
+    "cronJobs": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/definitions/jobKeys" },
+      "additionalProperties": {
+        "type": ["object", "null"],
+        "additionalProperties": false,
+        "required": ["spec"],
+        "properties": {
+          "annotations": { "type": "object" },
+          "spec": {
+            "description": "Native CronJob spec without jobTemplate (the chart builds it from jobSpec + the pod template)",
+            "type": "object",
+            "required": ["schedule"],
+            "not": { "required": ["jobTemplate"] },
+            "properties": {
+              "schedule": { "type": "string", "minLength": 1 },
+              "timeZone": { "type": "string" },
+              "concurrencyPolicy": { "type": "string", "enum": ["Allow", "Forbid", "Replace"] }
+            }
+          },
+          "jobSpec": { "$ref": "#/definitions/jobSpec" },
+          "container": { "$ref": "#/definitions/jobContainer" },
+          "pod": { "$ref": "#/definitions/jobPod" },
+          "nodeSelector": { "type": "object" },
+          "tolerations": { "type": "array" },
+          "volumes": { "type": "array" }
         }
       }
     },
