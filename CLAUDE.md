@@ -18,7 +18,7 @@ An open-source, generic Helm chart (`oci://ghcr.io/yupanzi/charts/dockerhelm`, M
 
 ```
 templates/
-├── _helpers.tpl           # Naming / labels / annotations / pullSecrets / affinity / pdbWillCreate / headlessServiceName
+├── _helpers.tpl           # Naming / labels / annotations / pullSecrets / affinity / pdbWillCreate / headlessServiceName / lifecycle
 ├── _podSpec.tpl           # Shared spec.template.spec fragment (Deployment / StatefulSet)
 ├── _container.tpl         # Container definition shared by the main and job containers (passes fields through; env/envFrom use tpl)
 ├── _job.tpl               # Job name / labels / metadata / pod template shared by jobs.yaml / cronjobs.yaml
@@ -30,7 +30,7 @@ templates/
 ├── service.yaml / ingress.yaml / hpa.yaml / pdb.yaml / configmap.yaml / secret.yaml / serviceaccount.yaml / pvc.yaml
 └── NOTES.txt              # Status summary after helm install
 values.schema.json         # Rejects invalid fields during Helm validation
-examples/                  # Use-case values examples (sidecar / stateful / comprehensive)
+examples/                  # Use-case values examples (sidecar / stateful / loadbalancer / comprehensive)
 .releaserc.json            # semantic-release plugins: version bump / changelog / OCI push / GitHub Release
 package.json + lockfile    # Exact-pinned release toolchain (npm ci in the workflow; not part of the chart)
 .github/workflows/         # ci.yml (lint+render+kubeconform+kind dry-run) / semantic-release.yml (auto release on master) / release.yml (manual-tag fallback)
@@ -72,6 +72,9 @@ package.json + lockfile    # Exact-pinned release toolchain (npm ci in the workf
 11. **Every `jobs.<key>` is a Helm hook, and hook Jobs never reference the chart-created ServiceAccount**
    A plain Job's pod template is immutable (the next upgrade that changes the image fails), so the template `fail`s without `helm.sh/hook`. pre-install hooks run before any release resource exists, so a reference to the chart-created ServiceAccount would leave the Job without pods until the hook times out (`dockerhelm.serviceAccountFields` decides this from the hook annotation). Job entries never inherit `container.env` (least privilege; Helm cannot merge lists).
 
+12. **Container lifecycle goes through the `dockerhelm.lifecycle` helper**
+   Kubernetes allows one handler per hook, while Helm deep-merges user handlers next to the default `preStop.sleep`. The helper drops that residual sleep when another preStop handler is present, fails when the user set two handlers on one hook, removes null handler keys (Helm keeps a user `null` when the default has no such key), and renders `exec: sleep N` on Kubernetes < 1.30 where the native sleep action is not on by default. Do not render `container.lifecycle` with a bare `toYaml`; CI has regression coverage.
+
 ## Change Checklist
 
 | Change | Also check |
@@ -105,7 +108,7 @@ helm template test . -f examples/values-comprehensive.yaml > /dev/null
 helm template test . -f examples/values-comprehensive.yaml | kubectl apply --dry-run=server -f -
 ```
 
-At minimum, cover: default Deployment, StatefulSet + persistence, HPA + PDB (`autoscaling.enabled=true` and `minReplicas=2`), `strategy.type=Recreate` (confirm no stale rollingUpdate remains), and jobs / cronJobs (comprehensive example; a Job without `helm.sh/hook` must fail).
+At minimum, cover: default Deployment, StatefulSet + persistence, HPA + PDB (`autoscaling.enabled=true` and `minReplicas=2`), `strategy.type=Recreate` (confirm no stale rollingUpdate remains), jobs / cronJobs (comprehensive example; a Job without `helm.sh/hook` must fail), preStop resolution (default sleep / `--kube-version 1.29.0` exec fallback / a user `exec` handler), and the LoadBalancer example.
 
 ## Release
 

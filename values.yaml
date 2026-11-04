@@ -160,13 +160,17 @@ container:
   #   initialDelaySeconds: 5
   #   periodSeconds: 10
 
-  # Lifecycle: sleep for 15s by default to allow time for endpoint removal (critical for zero downtime).
-  # Set lifecycle: null to disable this for images without /bin/sh (such as distroless).
-  # Do not use {}; an empty map does not remove defaults under Helm's deep merge.
+  # Lifecycle: preStop sleeps 15s by default so endpoints are removed before shutdown (critical for zero downtime).
+  # Uses the native sleep action, so no shell is needed (works with distroless images). On Kubernetes < 1.30
+  # the chart renders the equivalent exec "/bin/sh -c 'sleep 15'" instead.
+  # Kubernetes allows one handler per hook: when you set your own preStop handler (exec / httpGet / tcpSocket),
+  # the default sleep is dropped automatically. Two handlers you set yourself fail the render.
+  # Set lifecycle: null to disable preStop entirely. Do not use {}; an empty map does not remove
+  # defaults under Helm's deep merge.
   lifecycle:
     preStop:
-      exec:
-        command: ["/bin/sh", "-c", "sleep 15"]
+      sleep:
+        seconds: 15
 
   # Additional volume mounts (used with volumes / persistence below)
   volumeMounts: []
@@ -260,6 +264,12 @@ service:
   sessionAffinity: ""
   # Cluster | Local (Local preserves the client IP and is valid only for NodePort/LoadBalancer)
   externalTrafficPolicy: ""
+  # The two fields below are valid only for type: LoadBalancer (the template fails if they are set with another type).
+  # Load balancer implementation, e.g. service.k8s.aws/nlb for aws-load-balancer-controller.
+  # Immutable after the Service is created; empty uses the cluster's default implementation.
+  loadBalancerClass: ""
+  # Client CIDR allow-list, e.g. ["203.0.113.10/32"]. Empty usually means open to 0.0.0.0/0.
+  loadBalancerSourceRanges: []
   annotations: {}
 
 # ============================================================

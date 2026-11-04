@@ -285,6 +285,11 @@
           "type": "string",
           "enum": ["", "Cluster", "Local"]
         },
+        "loadBalancerClass": { "type": "string" },
+        "loadBalancerSourceRanges": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
         "annotations": { "type": "object" }
       }
     },

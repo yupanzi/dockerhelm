@@ -52,6 +52,14 @@ jobs:
           fi
           helm template test . $DEMO_IMAGE --set global.env=prod > /dev/null
 
+      - name: Negative template validation (conflicting lifecycle handlers / LoadBalancer-only fields on ClusterIP)
+        run: |
+          helm template test . $DEMO_IMAGE --set 'container.lifecycle.preStop.exec.command={true}' \
+            --set container.lifecycle.preStop.httpGet.port=80 2>&1 | grep -q 'Kubernetes allows exactly one'
+          helm template test . $DEMO_IMAGE --set service.enabled=true --set 'container.ports[0].name=http' \
+            --set 'container.ports[0].containerPort=80' --set service.loadBalancerClass=x 2>&1 \
+            | grep -q 'require service.type=LoadBalancer'
+
       - name: Render all use cases (single source list reused by later steps)
         run: |
           mkdir -p /tmp/rendered
@@ -59,6 +67,9 @@ jobs:
           helm template test . -f examples/values-stateful.yaml                   > /tmp/rendered/stateful.yaml
           helm template test . -f examples/values-sidecar.yaml                    > /tmp/rendered/sidecar.yaml
           helm template test . -f examples/values-comprehensive.yaml              > /tmp/rendered/comprehensive.yaml
+          helm template test . -f examples/values-loadbalancer.yaml               > /tmp/rendered/loadbalancer.yaml
+          helm template test . $DEMO_IMAGE --kube-version 1.29.0                  > /tmp/rendered/prestop-legacy.yaml
+          helm template test . $DEMO_IMAGE --set 'container.lifecycle.preStop.exec.command={/bin/sh,-c,sleep 5}' > /tmp/rendered/prestop-exec.yaml
           helm template test . $DEMO_IMAGE --set autoscaling.enabled=true --set autoscaling.minReplicas=2 > /tmp/rendered/hpa-pdb.yaml
           helm template test . $DEMO_IMAGE --set workload.strategy.type=Recreate  > /tmp/rendered/recreate.yaml
           helm template test . $DEMO_IMAGE --set workload.kind=StatefulSet --set persistence.enabled=true > /tmp/rendered/sts-persistence.yaml
@@ -74,6 +85,15 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Regression validation (preStop handler resolution; see CLAUDE.md invariant 12)
+        # default → native sleep; < 1.30 → exec sleep fallback; a user exec handler drops the default sleep
+        run: |
+          q='select(.kind == "Deployment") | .spec.template.spec.containers[0].lifecycle.preStop | keys | join(",")'
+          test "$(yq "$q" /tmp/rendered/default.yaml)" = sleep
+          test "$(yq "$q" /tmp/rendered/prestop-legacy.yaml)" = exec
+          test "$(yq "$q" /tmp/rendered/prestop-exec.yaml)" = exec
+          test "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]' /tmp/rendered/prestop-legacy.yaml)" = "sleep 15"
 
       - name: Regression validation (job pods must not carry app.kubernetes.io/name; see CLAUDE.md invariant 10)
         # yq ships with the GitHub ubuntu runner image

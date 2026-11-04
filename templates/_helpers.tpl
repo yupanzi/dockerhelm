@@ -321,3 +321,47 @@ minAvailable: {{ $pdb.minAvailable }}
 maxUnavailable: {{ $pdb.maxUnavailable }}
 {{- end -}}
 {{- end }}
+
+{{/*
+Container lifecycle (native Kubernetes fields, with three guards).
+Kubernetes allows exactly one handler (exec / httpGet / tcpSocket / sleep) per hook, but Helm deep-merges
+user values with the chart default preStop.sleep, so a user's own preStop handler arrives next to that sleep.
+  1) preStop: a sleep next to another handler is the residue of the chart default → drop it
+     (same idea as rolloutStrategy dropping a residual rollingUpdate).
+  2) Two or more handlers still left on one hook were written by the user → fail with guidance.
+  3) The native sleep action is on by default only from Kubernetes 1.30 (PodLifecycleSleepAction beta);
+     older clusters get the equivalent exec "sleep N" instead (that path needs /bin/sh in the image).
+Call: include "dockerhelm.lifecycle" (dict "root" $ "lc" <lifecycle values> "name" <container name>)
+Returns YAML map contents or an empty string; callers absorb it with with.
+*/}}
+{{- define "dockerhelm.lifecycle" -}}
+{{- $lc := deepCopy (.lc | default dict) -}}
+{{- $native := semverCompare ">=1.30-0" .root.Capabilities.KubeVersion.Version -}}
+{{- range $hook := list "postStart" "preStop" -}}
+{{- $h := index $lc $hook -}}
+{{- if $h -}}
+{{- $set := list -}}
+{{- range $t := list "exec" "httpGet" "tcpSocket" "sleep" -}}
+{{- if hasKey $h $t -}}
+{{- /* Helm keeps a user null when the default has no such key (e.g. exec: null after the default became sleep); drop it */ -}}
+{{- if kindIs "invalid" (index $h $t) }}{{ $_ := unset $h $t }}{{ else }}{{ $set = append $set $t }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq $hook "preStop") (has "sleep" $set) (gt (len $set) 1) -}}
+{{- $_ := unset $h "sleep" -}}
+{{- $set = without $set "sleep" -}}
+{{- end -}}
+{{- if gt (len $set) 1 -}}
+{{- fail (printf "container %q lifecycle.%s sets %d handlers (%s), but Kubernetes allows exactly one; set the unused ones to null (an empty map does not remove a key under Helm's deep merge)" $.name $hook (len $set) (join ", " $set)) -}}
+{{- end -}}
+{{- if and (has "sleep" $set) (not $native) -}}
+{{- $seconds := required (printf "container %q lifecycle.%s.sleep.seconds is required" $.name $hook) $h.sleep.seconds -}}
+{{- $_ := set $h "exec" (dict "command" (list "/bin/sh" "-c" (printf "sleep %v" $seconds))) -}}
+{{- $_ := unset $h "sleep" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- with $lc -}}
+{{- toYaml . -}}
+{{- end -}}
+{{- end }}

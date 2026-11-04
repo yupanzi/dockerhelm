@@ -62,10 +62,10 @@ container:
     httpGet: { path: /startup, port: http }
     failureThreshold: 30
     periodSeconds: 10
+  # Override only the duration; the native sleep action needs no shell
   lifecycle:
     preStop:
-      exec:
-        command: ["/bin/sh", "-c", "sleep 15"]
+      sleep: { seconds: 20 }
   volumeMounts:
     - { name: config, mountPath: /etc/app }
     - { name: tmp, mountPath: /tmp }

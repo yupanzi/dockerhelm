@@ -32,6 +32,7 @@ helm install web oci://ghcr.io/yupanzi/charts/dockerhelm \
 The `http` port declared in `container.ports` is the named port referenced by the Service's default `targetPort`. If it is missing, Helm fails during installation instead of leaving you with a 503 after deployment.
 
 Zero-downtime features (rolling updates / PDB / topology spread / preStop) are enabled by default and require no additional configuration.
+The preStop drain uses the native `sleep` action, so images without a shell (distroless) work too; on Kubernetes < 1.30 the chart falls back to `exec: sleep`.
 To install from local source, replace `oci://...` with the chart directory path.
 
 `image.repository` is the only required field. The chart does not provide a default image; it deploys your project's own image. An empty `image.tag` falls back to `latest` (pin a version or use `image.digest` in production).
@@ -46,6 +47,7 @@ To install from local source, replace `oci://...` with the chart directory path.
 | Migrations / scheduled tasks (same image, other entrypoint) | `jobs` (Helm hooks, e.g. `pre-install,pre-upgrade`) / `cronJobs`; env is per entry, not inherited |
 | Autoscaling | `autoscaling.enabled: true` (use `minReplicas >= 2` for zero-downtime protection) |
 | AWS ALB integration | `ingress.className: alb` + `ingress.alb.autoConfigure: true` |
+| TCP service behind a cloud load balancer (e.g. AWS NLB) | `service.type: LoadBalancer` + `service.loadBalancerClass` + `service.loadBalancerSourceRanges` |
 | Arbitrary resources (NetworkPolicy, etc.) | `extraObjects` (rendered through `tpl`) |
 
 See [`examples/`](./examples/) for complete examples.
@@ -62,7 +64,7 @@ See [`examples/`](./examples/) for complete examples.
 | ----------------- | --- |
 | What a field does | [`values.yaml`](./values.yaml) (fully commented) |
 | Field formats and allowed values | [`values.schema.json`](./values.schema.json) (enforced validation) |
-| How to configure a complete use case | [`examples/`](./examples/) — sidecar / stateful / comprehensive |
+| How to configure a complete use case | [`examples/`](./examples/) — sidecar / stateful / loadbalancer / comprehensive |
 | Internal conventions for modifying this chart | [`CLAUDE.md`](./CLAUDE.md) (for maintainers) |
 
 `values.schema.json` rejects invalid fields and values during `helm install`, before they reach the cluster. Invalid combinations (such as `ingress.enabled` without a Service) fail fast at the template layer.

@@ -12,6 +12,12 @@
 {{- fail (printf "service.ports[%s].targetPort=%q is a named port, but no container declares it in ports; add {name: %s, containerPort: <port>} to container.ports" .name .targetPort .targetPort) }}
 {{- end }}
 {{- end }}
+{{- /* The API server rejects loadBalancerClass / loadBalancerSourceRanges on non-LoadBalancer types.
+   Fail instead of silently dropping them: an allow-list that quietly disappears is worse than an error. */}}
+{{- $isLB := eq .Values.service.type "LoadBalancer" }}
+{{- if and (not $isLB) (or .Values.service.loadBalancerClass .Values.service.loadBalancerSourceRanges) }}
+{{- fail (printf "service.loadBalancerClass / service.loadBalancerSourceRanges require service.type=LoadBalancer (got %s)" .Values.service.type) }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -34,6 +40,15 @@ spec:
      Kubernetes >= 1.26 rejects it on ClusterIP. */}}
   {{- if and .Values.service.externalTrafficPolicy (or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer")) }}
   externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  {{- if $isLB }}
+  {{- with .Values.service.loadBalancerClass }}
+  loadBalancerClass: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- end }}
   ports:
     {{- toYaml .Values.service.ports | nindent 4 }}

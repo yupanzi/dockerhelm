@@ -59,9 +59,10 @@ Call: include "dockerhelm.container" (dict "root" $ "c" <container values> "name
   startupProbe:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with $c.lifecycle }}
+  {{- /* Handler guards and the < 1.30 sleep fallback live in the dockerhelm.lifecycle helper */}}
+  {{- with include "dockerhelm.lifecycle" (dict "root" $root "lc" $c.lifecycle "name" .name) }}
   lifecycle:
-    {{- toYaml . | nindent 4 }}
+    {{- . | nindent 4 }}
   {{- end }}
   {{- with $c.volumeMounts }}
   volumeMounts:

@@ -1,0 +1,43 @@
+# Use case: plain TCP service exposed through a cloud load balancer
+# (AWS NLB via aws-load-balancer-controller), TLS terminated at the load balancer, client CIDR allow-list.
+workload:
+  kind: Deployment
+  replicas: 2
+  # Must exceed preStop sleep + the application's own drain time
+  terminationGracePeriodSeconds: 60
+
+image:
+  repository: ghcr.io/acme/tcp-proxy
+  tag: v1.0.0
+
+container:
+  ports:
+    - { name: proxy, containerPort: 3128, protocol: TCP }
+  readinessProbe:
+    tcpSocket: { port: proxy }
+    periodSeconds: 5
+  livenessProbe:
+    tcpSocket: { port: proxy }
+    initialDelaySeconds: 10
+  # Outlast the target-group deregistration delay so in-flight connections drain (native sleep, no shell needed)
+  lifecycle:
+    preStop:
+      sleep: { seconds: 20 }
+
+service:
+  enabled: true
+  type: LoadBalancer
+  # Immutable after creation
+  loadBalancerClass: service.k8s.aws/nlb
+  # Without an allow-list most implementations open the load balancer to 0.0.0.0/0
+  loadBalancerSourceRanges:
+    - 203.0.113.10/32
+  ports:
+    - { name: proxy-tls, port: 443, targetPort: proxy, protocol: TCP }
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: tcp
+    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: deregistration_delay.timeout_seconds=30
